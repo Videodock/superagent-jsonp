@@ -1,59 +1,106 @@
-let serialise = function(obj) {
-  if (typeof obj != 'object') return obj;
-  let pairs = [];
-  for (let key in obj) {
-    if (null != obj[key]) {
-      pairs.push(encodeURIComponent(key)
-        + '=' + encodeURIComponent(obj[key]));
+let serialise = function (obj) {
+    if (typeof obj != 'object') return obj;
+    let pairs = [];
+    for (let key in obj) {
+        if (null != obj[key]) {
+            pairs.push(encodeURIComponent(key)
+                + '=' + encodeURIComponent(obj[key]));
+        }
     }
-  }
-  return pairs.join('&');
-}
-
-let jsonp = function(request) {
-  // In case this is in nodejs, run without modifying request
-  if(typeof window == 'undefined') return request;
-
-  request.end = end.bind(request);
-  return request;
+    return pairs.join('&');
 };
 
-let callbackWrapper = function(data) {
-	let err = null;
-	let res = {
-		body: data
-	};
+let jsonp = function (options) {
 
-	this._jsonp.callback.call(this, err, res);
+    return function (request) {
+        // In case this is in nodejs, run without modifying request
+        if (typeof window == 'undefined') return request;
+
+        request._jsonpOptions = options || {};
+
+        request.end = end.bind(request);
+        request.abort = abort.bind(request);
+        request.cleanup = cleanup.bind(request);
+
+        return request;
+    }
 };
 
-let end = function(callback) {
-  this._jsonp = {
-    callbackParam: 'callback',
-    callbackName:  'superagentCallback' + new Date().valueOf() + parseInt(Math.random() * 1000),
-    callback:       callback
-  };
+let callbackWrapper = function (data) {
+    let err = null;
+    let res = {
+        body: data
+    };
 
-	window[this._jsonp.callbackName] = callbackWrapper.bind(this);
+    if (this.timedout) {
+        return;
+    }
 
-  let params = {
-    [this._jsonp.callbackParam]: this._jsonp.callbackName
-  };
+    clearTimeout(this._timer);
 
-	this._query.push(serialise(params));
-	let queryString = this._query.join('&');
+    this._jsonp.callback.call(this, err, res);
+    this.cleanup();
+};
 
-	let s = document.createElement('script');
-	let separator = (this.url.indexOf('?') > -1) ? '&': '?';
-	let url = this.url + separator + queryString;
+let cleanup = function () {
 
-	s.src = url;
-	document.getElementsByTagName('head')[0].appendChild(s);
+    if (this._jsonp.script && this._jsonp.script.parentNode) {
+        this._jsonp.script.parentNode.removeChild(this._jsonp.script);
+    }
+};
+
+let abort = function () {
+
+    if (this._jsonp.callback) {
+        this._jsonp.callback.call(this, 'response timeout', null);
+    }
+
+    this.cleanup();
+};
+
+let end = function (callback) {
+
+    let self = this,
+        params,
+        queryString,
+        s, separator, url;
+
+    this._jsonp = {
+        callbackParam: this._jsonpOptions.callbackParam || 'callback',
+        callbackName:  (this._jsonpOptions.callbackName || 'superagentCallback') + new Date().valueOf() + parseInt(Math.random() * 1000),
+        callback:      callback
+    };
+
+    window[this._jsonp.callbackName] = callbackWrapper.bind(this);
+
+    params = {
+        [this._jsonp.callbackParam]: this._jsonp.callbackName
+    };
+
+    this._query.push(serialise(params));
+    queryString = this._query.join('&');
+
+    s         = document.createElement('script');
+    separator = (this.url.indexOf('?') > -1) ? '&' : '?';
+    url       = this.url + separator + queryString;
+
+    this._jsonp.script = s;
+
+    s.src = url;
+    document.getElementsByTagName('head')[0].appendChild(s);
+
+    // timeout
+    if (this._timeout && !this._timer) {
+        this._timer = setTimeout(function() {
+            self.timedout = true;
+            self.abort();
+        }, this._timeout);
+    }
 };
 
 // Prefer node/browserify style requires
-if(typeof module !== 'undefined' && typeof module.exports !== 'undefined'){
-  module.exports = jsonp;
-}  else if (typeof window !== 'undefined'){
-  window.superagentJSONP = jsonp;
+if (typeof module !== 'undefined' && typeof module.exports !== 'undefined') {
+    module.exports = jsonp;
+} else if (typeof window !== 'undefined') {
+    window.superagentJSONP = jsonp;
 }
