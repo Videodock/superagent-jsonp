@@ -33,7 +33,7 @@ var callbackWrapper = function callbackWrapper(data) {
         body: data
     };
 
-    if (this.timedout) {
+    if (this.timedout || this.hasError) {
         return;
     }
 
@@ -87,13 +87,18 @@ var end = function end(callback) {
 
     this._jsonp.script = s;
 
+    s.onerror = function () {
+        self.errorred = true;
+        self.abort();
+    };
+
     s.src = url;
     document.getElementsByTagName('head')[0].appendChild(s);
 
     // timeout
     if (this._timeout && !this._timer) {
         this._timer = setTimeout(function () {
-            self.timedout = true;
+            self.hasError = true;
             self.abort();
         }, this._timeout);
     }
